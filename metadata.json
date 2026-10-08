@@ -1,0 +1,6 @@
+{
+  "name": "臺南市工業區污水抄錶數據擷取系統",
+  "description": "自動擷取臺南市工業區園區業務管理平臺各廠商『前12個月平均每日污水水量（m³/日）』及抄錶明細數據，支援線上即時批次爬取、Edge DevTools 控制台一鍵腳本、歷月數據對照與 CSV/Excel 匯出。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
