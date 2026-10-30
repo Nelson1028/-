@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -116,25 +117,46 @@ app.get('/api/proxy/parks', async (req, res) => {
 });
 
 // ==========================================
-// 氣象署 CODIS (https://codis.cwa.gov.tw/StationData) 氣象測站與降雨量 API
+// 氣象署 CODIS (https://codis.cwa.gov.tw/StationData) 氣象測站與降水量 API
 // ==========================================
 
 const CWA_STATIONS_DATA: Record<string, { id: string; name: string; parkId: string; location: string }> = {
-  'C0X090': { id: 'C0X090', name: '柳營', parkId: 'LiouYing', location: '臺南市柳營區' },
-  '467470': { id: '467470', name: '新營', parkId: 'LiouYing', location: '臺南市新營區' },
-  'C0X060': { id: 'C0X060', name: '東山', parkId: 'LiouYing', location: '臺南市東山區' },
-  'C0X080': { id: 'C0X080', name: '官田', parkId: 'LiouYing', location: '臺南市官田區' },
-  'C0X050': { id: 'C0X050', name: '白河', parkId: 'LiouYing', location: '臺南市白河區' },
-  'C0X250': { id: 'C0X250', name: '安南', parkId: 'SinJi', location: '臺南市安南區' },
-  'C0X190': { id: 'C0X190', name: '安定', parkId: 'SinJi', location: '臺南市安定區' },
+  // 柳科工業區主要及鄰近測站
+  'C0X320': { id: 'C0X320', name: '柳營', parkId: 'LiouYing', location: '臺南市柳營區' },
+  'C0X250': { id: 'C0X250', name: '新營', parkId: 'LiouYing', location: '臺南市新營區' },
+  'C2X060': { id: 'C2X060', name: '下營', parkId: 'LiouYing', location: '臺南市下營區' },
+  'C0X130': { id: 'C0X130', name: '官田', parkId: 'LiouYing', location: '臺南市官田區' },
+  'C1X040': { id: 'C1X040', name: '東山東原', parkId: 'LiouYing', location: '臺南市東山區' },
+  'C0X210': { id: 'C0X210', name: '白河', parkId: 'LiouYing', location: '臺南市白河區' },
+  'C0X260': { id: 'C0X260', name: '後壁', parkId: 'LiouYing', location: '臺南市後壁區' },
+  'C0X230': { id: 'C0X230', name: '鹽水', parkId: 'LiouYing', location: '臺南市鹽水區' },
+
+  // 新吉工業區主要及鄰近測站
+  'C2O950': { id: 'C2O950', name: '安南', parkId: 'SinJi', location: '臺南市安南區' },
+  'C0N020': { id: 'C0N020', name: '城西', parkId: 'SinJi', location: '臺南市安南區' },
+  'C0N030': { id: 'C0N030', name: '四草', parkId: 'SinJi', location: '臺南市安南區' },
+  'C0X150': { id: 'C0X150', name: '安定', parkId: 'SinJi', location: '臺南市安定區' },
+  'C0X140': { id: 'C0X140', name: '西港', parkId: 'SinJi', location: '臺南市西港區' },
   '467420': { id: '467420', name: '永康', parkId: 'SinJi', location: '臺南市永康區' },
   '467410': { id: '467410', name: '臺南', parkId: 'SinJi', location: '臺南市中西區' },
-  'C0X180': { id: 'C0X180', name: '西港', parkId: 'SinJi', location: '臺南市西港區' },
-  'C0X210': { id: 'C0X210', name: '七股', parkId: 'SinJi', location: '臺南市七股區' },
-  'C0X110': { id: 'C0X110', name: '善化', parkId: 'all', location: '臺南市善化區' },
-  'C0X170': { id: 'C0X170', name: '佳里', parkId: 'all', location: '臺南市佳里區' },
-  'C0X150': { id: 'C0X150', name: '麻豆', parkId: 'all', location: '臺南市麻豆區' },
-  'C0X220': { id: 'C0X220', name: '仁德', parkId: 'all', location: '臺南市仁德區' },
+  'C0X190': { id: 'C0X190', name: '安平', parkId: 'SinJi', location: '臺南市安平區' },
+  '72N240': { id: '72N240', name: '七股', parkId: 'SinJi', location: '臺南市七股區' },
+
+  // 臺南市其他常用工業區與重要行政區氣象測站
+  'C0O900': { id: 'C0O900', name: '善化', parkId: 'all', location: '臺南市善化區' },
+  'C0O980': { id: 'C0O980', name: '新市', parkId: 'all', location: '臺南市新市區' },
+  'C0X080': { id: 'C0X080', name: '佳里', parkId: 'all', location: '臺南市佳里區' },
+  'C0X120': { id: 'C0X120', name: '麻豆', parkId: 'all', location: '臺南市麻豆區' },
+  'C0X160': { id: 'C0X160', name: '仁德', parkId: 'all', location: '臺南市仁德區' },
+  'C1N001': { id: 'C1N001', name: '歸仁沙崙', parkId: 'all', location: '臺南市歸仁區' },
+  'C0X170': { id: 'C0X170', name: '關廟', parkId: 'all', location: '臺南市關廟區' },
+  'C0X180': { id: 'C0X180', name: '山上', parkId: 'all', location: '臺南市山上區' },
+  'C0X220': { id: 'C0X220', name: '學甲', parkId: 'all', location: '臺南市學甲區' },
+  'C0X280': { id: 'C0X280', name: '將軍', parkId: 'all', location: '臺南市將軍區' },
+  'C0X290': { id: 'C0X290', name: '北門', parkId: 'all', location: '臺南市北門區' },
+  'C2O930': { id: 'C2O930', name: '玉井', parkId: 'all', location: '臺南市玉井區' },
+  'C1O921': { id: 'C1O921', name: '楠西', parkId: 'all', location: '臺南市楠西區' },
+  'C2O880': { id: 'C2O880', name: '南化', parkId: 'all', location: '臺南市南化區' },
 };
 
 // 取得氣象測站清單與工業區對應配置
@@ -143,69 +165,204 @@ app.get('/api/proxy/cwa/stations', (_req, res) => {
     success: true,
     source: 'https://codis.cwa.gov.tw/StationData',
     defaultParkStationMap: {
-      LiouYing: 'C0X090', // 柳科工業區 -> 柳營測站
-      SinJi: 'C0X250',    // 新吉工業區 -> 安南測站
-      default: 'C0X090',
+      LiouYing: 'C0X320', // 柳科工業區 -> 柳營測站 (C0X320)
+      SinJi: 'C2O950',    // 新吉工業區 -> 安南測站 (C2O950)
+      default: 'C0X320',
     },
     stations: Object.values(CWA_STATIONS_DATA),
   });
 });
 
-// 擷取指定測站與區間之日降雨量數據 (整合 CODIS CWA 觀測資料)
+/**
+ * 輔助函式：自交通部中央氣象署 CODIS API (https://codis.cwa.gov.tw/api/station) 抓取真實測站降水觀測
+ * 支援中央氣象署各時期站碼轉換（例如 C2X060 / C0X060 下營、C2O950 / C0O950 安南、C0O830 / C2O880 南化等）
+ */
+async function fetchCodisPrecipitation(stationId: string, startPeriod: string, endPeriod: string): Promise<Record<string, { rainfall: number; hourlyMax: number }>> {
+  const months = getMonthsRange(startPeriod, endPeriod);
+
+  // 決定主查詢測站 ID 與新舊歷年相容備選測站代碼
+  const candidateIds = [stationId];
+  if (stationId === 'C0X320') candidateIds.push('C0X270');
+  else if (stationId === 'C0X270') candidateIds.push('C0X320');
+  else if (stationId === 'C0X250') candidateIds.push('C0O910');
+  else if (stationId === 'C0O910') candidateIds.push('C0X250');
+  else if (stationId === 'C2X060') candidateIds.push('C0X060', 'C1X060');
+  else if (stationId === 'C0X060') candidateIds.push('C2X060', 'C1X060');
+  else if (stationId === 'C2O950') candidateIds.push('C0O950');
+  else if (stationId === 'C0O950') candidateIds.push('C2O950');
+  else if (stationId === 'C2O930') candidateIds.push('C0O930');
+  else if (stationId === 'C0O930') candidateIds.push('C2O930');
+  else if (stationId === 'C2O880') candidateIds.push('C0O830', 'C1O880');
+  else if (stationId === 'C0O830') candidateIds.push('C2O880');
+  else if (stationId === '72N240') candidateIds.push('C0X310', '467780');
+
+  const getCandidateTypes = (stn: string) => {
+    if (stn.startsWith('46')) return ['cwb', 'auto_C0', 'agr'];
+    if (stn.startsWith('C2') || stn.startsWith('72')) return ['agr', 'auto_C0', 'auto_C1'];
+    if (stn.startsWith('C1')) return ['auto_C0', 'auto_C1', 'agr', 'cwb'];
+    return ['auto_C0', 'agr', 'auto_C1', 'cwb'];
+  };
+
+  const map: Record<string, { rainfall: number; hourlyMax: number }> = {};
+
+  for (const mStr of months) {
+    let monthFound = false;
+    const [y, m] = mStr.split('-').map(Number);
+    const lastDay = new Date(y, m, 0).getDate();
+    const startIso = `${mStr}-01T00:00:00`;
+    const endIso = `${mStr}-${String(lastDay).padStart(2, '0')}T23:59:59`;
+
+    for (const cId of candidateIds) {
+      if (monthFound) break;
+      const candidateTypes = getCandidateTypes(cId);
+
+      for (const stnType of candidateTypes) {
+        if (monthFound) break;
+        try {
+          const postBody = new URLSearchParams({
+            stn_ID: cId,
+            stn_type: stnType,
+            type: 'report_month',
+            date: mStr,
+            start: startIso,
+            end: endIso,
+          }).toString();
+
+          const codisRes = await fetch('https://codis.cwa.gov.tw/api/station', {
+            method: 'POST',
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'Accept': 'application/json, text/javascript, */*; q=0.01',
+              'Referer': 'https://codis.cwa.gov.tw/StationData',
+            },
+            body: postBody,
+          });
+
+          if (codisRes.ok) {
+            const json = await codisRes.json();
+            const dts = json?.data?.[0]?.dts;
+            if (Array.isArray(dts) && dts.length > 0) {
+              dts.forEach((d: any) => {
+                if (d.DataDate) {
+                  const clean = d.DataDate.split('T')[0].replace(/-/g, '/');
+                  const accum = d.Precipitation?.Accumulation;
+                  const hMax = d.Precipitation?.HourlyMaximum;
+
+                  let rainVal = 0;
+                  if (accum !== undefined && accum !== null) {
+                    if (accum === 'T' || accum === 't') {
+                      rainVal = 0; // 微量降水 (Trace <0.1mm)
+                    } else {
+                      const num = Number(accum);
+                      if (!isNaN(num)) {
+                        rainVal = num > 0 ? num : 0; // 排除 -9999 / -999 等儀器故障或無觀測負值
+                      }
+                    }
+                  }
+
+                  let hMaxVal = 0;
+                  if (hMax !== undefined && hMax !== null) {
+                    const hNum = Number(hMax);
+                    if (!isNaN(hNum) && hNum > 0) {
+                      hMaxVal = hNum;
+                    }
+                  }
+
+                  map[clean] = {
+                    rainfall: rainVal,
+                    hourlyMax: hMaxVal,
+                  };
+                }
+              });
+              monthFound = true;
+            }
+          }
+        } catch (e: any) {
+          // 容錯嘗試下一種候選站型
+        }
+      }
+    }
+  }
+
+  return map;
+}
+
+// 擷取指定測站與區間之日降水量數據 (整合 CODIS CWA 觀測資料)
 app.get('/api/proxy/cwa/rainfall', async (req, res) => {
-  const stationId = (req.query.stationId as string) || 'C0X090';
-  const startPeriod = (req.query.startPeriod as string) || (req.query.period as string) || new Date().toISOString().slice(0, 7);
-  const endPeriod = (req.query.endPeriod as string) || startPeriod;
-  const stationInfo = CWA_STATIONS_DATA[stationId] || { id: stationId, name: stationId, parkId: 'LiouYing', location: '臺南市' };
+  const stationId = (req.query.stationId as string) || 'C0X320';
+  const startDateParam = (req.query.startDate as string) || (req.query.start as string) || '';
+  const endDateParam = (req.query.endDate as string) || (req.query.end as string) || '';
+  
+  let startPeriod = (req.query.startPeriod as string) || (req.query.period as string) || '';
+  let endPeriod = (req.query.endPeriod as string) || startPeriod;
+
+  if (startDateParam && !startPeriod) {
+    startPeriod = startDateParam.slice(0, 7).replace(/\//g, '-');
+  }
+  if (endDateParam && !endPeriod) {
+    endPeriod = endDateParam.slice(0, 7).replace(/\//g, '-');
+  }
+  if (!startPeriod) startPeriod = new Date().toISOString().slice(0, 7);
+  if (!endPeriod) endPeriod = startPeriod;
+
+  const stationInfo = CWA_STATIONS_DATA[stationId] || { 
+    id: stationId, 
+    name: stationId, 
+    parkId: stationId === 'C2O950' ? 'SinJi' : 'LiouYing', 
+    location: '臺南市' 
+  };
 
   try {
-    // 嘗試向氣象署 CODIS / CWA Open Data 介接
     const months = getMonthsRange(startPeriod, endPeriod);
-    const records: Array<{ date: string; rainfall: number; hourlyMax: number; stationId: string; stationName: string }> = [];
 
-    // 為確保在各種外網防護環境下均可順暢展示降雨量與雨污混流分析，建立可重現且符合該測站特徵之日降雨量矩陣
+    // 優先向中央氣象署 CODIS 抓取真實觀測紀錄
+    const codisMap = await fetchCodisPrecipitation(stationId, startPeriod, endPeriod);
+    const hasCodisData = Object.keys(codisMap).length > 0;
+
+    let records: Array<{
+      date: string;
+      rainfall: number;
+      hourlyMax: number;
+      stationId: string;
+      stationName: string;
+      intensityLevel: string;
+      isEstimated?: boolean;
+    }> = [];
+
     for (const mStr of months) {
       const [year, month] = mStr.split('-').map(Number);
       const daysInMonth = new Date(year, month, 0).getDate();
 
-      // 基於測站代碼與年月種子生成穩定的氣象降雨分佈（包含暴雨日、陣雨日與乾燥晴天）
-      const seed = stationId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) + year * 100 + month;
-
       for (let day = 1; day <= daysInMonth; day++) {
         const dateStr = `${year}/${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}`;
         
-        // 氣象特徵模式：夏季/秋季 (6-10月) 易有西南氣流午後雷陣雨或颱風雨量
-        const daySeed = Math.sin(seed + day * 13.7) * 10000;
-        const rand = daySeed - Math.floor(daySeed);
-
         let rainfall = 0;
         let hourlyMax = 0;
+        let isEstimated = false;
 
-        if (month >= 5 && month <= 10) {
-          // 雨季：部分日子有較大雨量
-          if (rand > 0.82) {
-            // 強降雨 / 暴雨日 (40 ~ 115 mm)
-            rainfall = Number((40 + rand * 75).toFixed(1));
-            hourlyMax = Number((rainfall * 0.45).toFixed(1));
-          } else if (rand > 0.65) {
-            // 中雷雨日 (15 ~ 38 mm)
-            rainfall = Number((15 + rand * 23).toFixed(1));
-            hourlyMax = Number((rainfall * 0.4).toFixed(1));
-          } else if (rand > 0.50) {
-            // 小雨日 (2 ~ 12 mm)
-            rainfall = Number((2 + rand * 10).toFixed(1));
-            hourlyMax = Number((rainfall * 0.6).toFixed(1));
-          }
+        if (codisMap[dateStr]) {
+          // 採用氣象署 CODIS 實測值
+          rainfall = codisMap[dateStr].rainfall;
+          hourlyMax = codisMap[dateStr].hourlyMax;
+        } else if (hasCodisData) {
+          // 該月份已有氣象署觀測回傳，若無紀錄代表無降水 (0 mm)
+          rainfall = 0;
+          hourlyMax = 0;
         } else {
-          // 旱季 (11-4月)：降雨機率較低
-          if (rand > 0.88) {
-            rainfall = Number((10 + rand * 25).toFixed(1));
-            hourlyMax = Number((rainfall * 0.35).toFixed(1));
-          } else if (rand > 0.75) {
-            rainfall = Number((1 + rand * 8).toFixed(1));
-            hourlyMax = Number((rainfall * 0.5).toFixed(1));
-          }
+          // 僅在無法連線或未歸檔期間，標記預設值 0（不捏造虛假暴雨）
+          rainfall = 0;
+          hourlyMax = 0;
+          isEstimated = true;
         }
+
+        let intensityLevel = '無降水';
+        if (rainfall >= 350) intensityLevel = '超大豪雨';
+        else if (rainfall >= 200) intensityLevel = '大豪雨';
+        else if (rainfall >= 80) intensityLevel = '豪雨';
+        else if (rainfall >= 50) intensityLevel = '大雨';
+        else if (rainfall >= 10) intensityLevel = '中雨';
+        else if (rainfall > 0) intensityLevel = '小雨';
 
         records.push({
           date: dateStr,
@@ -213,12 +370,25 @@ app.get('/api/proxy/cwa/rainfall', async (req, res) => {
           hourlyMax,
           stationId,
           stationName: stationInfo.name,
+          intensityLevel,
+          isEstimated,
         });
       }
     }
 
+    // 若有填選具體年月日，進行精確日期區間過濾 (YYYY/MM/DD)
+    if (startDateParam) {
+      const sClean = startDateParam.replace(/-/g, '/');
+      records = records.filter((r) => r.date >= sClean);
+    }
+    if (endDateParam) {
+      const eClean = endDateParam.replace(/-/g, '/');
+      records = records.filter((r) => r.date <= eClean);
+    }
+
     const totalRainfall = Number(records.reduce((acc, cur) => acc + cur.rainfall, 0).toFixed(1));
     const rainyDays = records.filter((r) => r.rainfall >= 0.5).length;
+    const heavyRainDays = records.filter((r) => r.rainfall >= 50).length;
     let maxDailyRain = 0;
     let maxDailyDate = '';
     records.forEach((r) => {
@@ -234,11 +404,13 @@ app.get('/api/proxy/cwa/rainfall', async (req, res) => {
       stationId,
       stationName: stationInfo.name,
       location: stationInfo.location,
-      startPeriod,
-      endPeriod,
+      startDate: records[0]?.date || startDateParam || startPeriod,
+      endDate: records[records.length - 1]?.date || endDateParam || endPeriod,
       summary: {
         totalRainfall,
         rainyDays,
+        totalDays: records.length,
+        heavyRainDays,
         maxDailyRain,
         maxDailyDate,
       },
@@ -247,9 +419,87 @@ app.get('/api/proxy/cwa/rainfall', async (req, res) => {
   } catch (err: any) {
     return res.status(500).json({
       success: false,
-      message: `擷取氣象署測站降雨量資料失敗: ${err?.message}`,
+      message: `擷取氣象署測站降水量資料失敗: ${err?.message}`,
     });
   }
+});
+
+// 下載指定測站與區間之日降水量 CSV 檔案
+app.get('/api/proxy/cwa/rainfall/download.csv', async (req, res) => {
+  const stationId = (req.query.stationId as string) || 'C0X320';
+  const startDateParam = (req.query.startDate as string) || '';
+  const endDateParam = (req.query.endDate as string) || '';
+  let startPeriod = (req.query.startPeriod as string) || (startDateParam ? startDateParam.slice(0, 7) : new Date().toISOString().slice(0, 7));
+  let endPeriod = (req.query.endPeriod as string) || (endDateParam ? endDateParam.slice(0, 7) : startPeriod);
+
+  const stationInfo = CWA_STATIONS_DATA[stationId] || { id: stationId, name: stationId, parkId: 'LiouYing', location: '臺南市' };
+  const months = getMonthsRange(startPeriod, endPeriod);
+
+  const codisMap = await fetchCodisPrecipitation(stationId, startPeriod, endPeriod);
+  const hasCodisData = Object.keys(codisMap).length > 0;
+  let records: Array<{ date: string; rainfall: number; hourlyMax: number; intensityLevel: string }> = [];
+
+  for (const mStr of months) {
+    const [year, month] = mStr.split('-').map(Number);
+    const daysInMonth = new Date(year, month, 0).getDate();
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${year}/${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}`;
+      
+      let rainfall = 0;
+      let hourlyMax = 0;
+
+      if (codisMap[dateStr]) {
+        rainfall = codisMap[dateStr].rainfall;
+        hourlyMax = codisMap[dateStr].hourlyMax;
+      } else if (hasCodisData) {
+        rainfall = 0;
+        hourlyMax = 0;
+      } else {
+        rainfall = 0;
+        hourlyMax = 0;
+      }
+
+      let intensityLevel = '無降水';
+      if (rainfall >= 350) intensityLevel = '超大豪雨';
+      else if (rainfall >= 200) intensityLevel = '大豪雨';
+      else if (rainfall >= 80) intensityLevel = '豪雨';
+      else if (rainfall >= 50) intensityLevel = '大雨';
+      else if (rainfall >= 10) intensityLevel = '中雨';
+      else if (rainfall > 0) intensityLevel = '小雨';
+
+      records.push({ date: dateStr, rainfall, hourlyMax, intensityLevel });
+    }
+  }
+
+  if (startDateParam) {
+    const sClean = startDateParam.replace(/-/g, '/');
+    records = records.filter((r) => r.date >= sClean);
+  }
+  if (endDateParam) {
+    const eClean = endDateParam.replace(/-/g, '/');
+    records = records.filter((r) => r.date <= eClean);
+  }
+
+  const parkLabel = stationInfo.parkId === 'SinJi' ? '新吉工業區' : '柳科工業區';
+  const csvHeaders = ['測站代碼', '測站名稱', '觀測日期', '日降水量(mm)', '降水強度等級', '最大時降水量(mm)', '對應園區', '資料來源'];
+  const csvRows = records.map((r) => [
+    `"${stationId}"`,
+    `"${stationInfo.name}"`,
+    `"${r.date}"`,
+    r.rainfall,
+    `"${r.intensityLevel}"`,
+    r.hourlyMax,
+    `"${parkLabel}"`,
+    `"https://codis.cwa.gov.tw/StationData"`,
+  ]);
+
+  const csvContent = '\uFEFF' + [csvHeaders.join(','), ...csvRows.map((row) => row.join(','))].join('\n');
+  const filename = `氣象署CODIS降水數據_${stationInfo.name}(${stationId})_${startDateParam || startPeriod}_${endDateParam || endPeriod}.csv`;
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+  return res.send(csvContent);
 });
 
 // Get Captcha from official platform
@@ -379,100 +629,7 @@ app.post('/api/proxy/vendor-detail', async (req, res) => {
   return res.status(result.status).json(result.data || { success: false, error: result.error });
 });
 
-// Proxy CWA CODIS weather station rainfall data (https://codis.cwa.gov.tw/StationData)
-app.get('/api/proxy/cwa/rainfall', async (req, res) => {
-  const stationId = (req.query.stationId as string) || 'C0X320';
-  const startPeriod = (req.query.startPeriod as string) || (req.query.period as string) || new Date().toISOString().slice(0, 7);
-  const endPeriod = (req.query.endPeriod as string) || startPeriod;
-  const targetMonths = getMonthsRange(startPeriod, endPeriod);
 
-  let stnType = (req.query.stnType as string) || '';
-  if (!stnType) {
-    if (stationId.startsWith('46')) stnType = 'cwb';
-    else if (stationId.startsWith('A') || stationId.startsWith('C2')) stnType = 'agr';
-    else stnType = 'auto_C0';
-  }
-
-  const allRecords: { date: string; rainfall: number; hourlyMax?: number }[] = [];
-
-  for (const mStr of targetMonths) {
-    try {
-      const [yStr, mNumStr] = mStr.split('-');
-      const y = parseInt(yStr, 10);
-      const m = parseInt(mNumStr, 10);
-      const lastDay = new Date(y, m, 0).getDate();
-      const startIso = `${mStr}-01T00:00:00`;
-      const endIso = `${mStr}-${String(lastDay).padStart(2, '0')}T23:59:59`;
-
-      const postBody = new URLSearchParams({
-        stn_ID: stationId,
-        stn_type: stnType,
-        type: 'report_month',
-        date: mStr,
-        start: startIso,
-        end: endIso,
-      }).toString();
-
-      const codisRes = await fetch('https://codis.cwa.gov.tw/api/station', {
-        method: 'POST',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          'Accept': 'application/json, text/javascript, */*; q=0.01',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Referer': 'https://codis.cwa.gov.tw/StationData',
-        },
-        body: postBody,
-      });
-
-      if (codisRes.ok) {
-        const json = await codisRes.json();
-        if (json?.data && Array.isArray(json.data) && json.data[0]?.dts) {
-          json.data[0].dts.forEach((d: any) => {
-            if (d.DataDate) {
-              const clean = d.DataDate.split('T')[0].replace(/-/g, '/');
-              const rain = d.Precipitation?.Accumulation !== null && d.Precipitation?.Accumulation !== undefined
-                ? Number(d.Precipitation.Accumulation)
-                : 0;
-              allRecords.push({
-                date: clean,
-                rainfall: isNaN(rain) || rain < 0 ? 0 : rain,
-                hourlyMax: d.Precipitation?.HourlyMaximum !== null && d.Precipitation?.HourlyMaximum !== undefined ? Number(d.Precipitation.HourlyMaximum) : 0,
-              });
-            }
-          });
-        }
-      }
-    } catch (err: any) {
-      console.error('CODIS query error:', err?.message);
-    }
-  }
-
-  // Fallback if no records returned
-  if (allRecords.length === 0) {
-    targetMonths.forEach((mStr) => {
-      const [yStr, mNumStr] = mStr.split('-');
-      const y = parseInt(yStr, 10);
-      const m = parseInt(mNumStr, 10);
-      const lastDay = new Date(y, m, 0).getDate();
-      for (let day = 1; day <= lastDay; day++) {
-        const dayStr = `${mStr.replace('-', '/')}/${String(day).padStart(2, '0')}`;
-        const isRainy = (day % 6 === 2 || day === 12 || day === 21);
-        const rainAmount = isRainy ? Number((((day * 8) % 38) + 15).toFixed(1)) : 0;
-        allRecords.push({ date: dayStr, rainfall: rainAmount });
-      }
-    });
-  }
-
-  return res.json({
-    success: true,
-    stationId,
-    stnType,
-    startPeriod,
-    endPeriod,
-    data: allRecords,
-  });
-});
 
 // Helper to generate months between start and end (inclusive)
 function getMonthsRange(start: string, end: string): string[] {
@@ -743,9 +900,29 @@ app.get('/api/proxy/batch-crawl-stream', async (req, res) => {
   }
 });
 
+// API route to download local executable package ZIP
+app.get('/api/download/local-package', (_req, res) => {
+  const possiblePaths = [
+    path.resolve(__dirname, 'tainan-sewage-system-local.zip'),
+    path.resolve(__dirname, 'public', 'tainan-sewage-system-local.zip'),
+    path.resolve(process.cwd(), 'tainan-sewage-system-local.zip'),
+  ];
+  const zipPath = possiblePaths.find((p) => fs.existsSync(p));
+
+  if (zipPath) {
+    res.download(zipPath, 'tainan-sewage-system-local.zip');
+  } else {
+    res.status(404).json({ error: '本地執行包正在打包中或尚未生成，請稍候重試' });
+  }
+});
+
 // Configure Vite in development or static serve in production
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  const rootDist = path.resolve(__dirname, 'dist');
+  const hasDist = fs.existsSync(path.resolve(rootDist, 'index.html')) || fs.existsSync(path.resolve(__dirname, 'index.html'));
+  const isDev = process.env.NODE_ENV === 'development';
+
+  if (isDev || (!hasDist && process.env.NODE_ENV !== 'production')) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -753,7 +930,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
+    const distPath = fs.existsSync(rootDist) ? rootDist : __dirname;
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.resolve(distPath, 'index.html'));

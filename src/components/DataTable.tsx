@@ -27,6 +27,7 @@ import {
 import { VendorSewageData, ParkOption } from '../types';
 import { exportMergedReportCSV, getVendorLatestBillingDate } from '../utils/csvExport';
 import { DETECTED_PARKS_LIST } from '../data/mockData';
+import { getAnomalyCheckPriority } from '../utils/anomalyAnalysis';
 
 interface DataTableProps {
   data: VendorSewageData[];
@@ -211,12 +212,15 @@ export const DataTable: React.FC<DataTableProps> = ({
   const sortedData = useMemo(() => {
     return [...filteredData].sort((a, b) => {
       if (sortField === 'anomaly') {
-        // 嚴重異常 (danger: 2) > 警戒關注 (warning: 1) > 正常合格 (normal: 0)
+        // 嚴重異常 (danger: 2000+) > 警戒關注 (warning: 1000+) > 正常合格 (normal: 0)
+        // 並依據單一水錶最嚴重異常項目的權重進一步排序
         const getWeight = (item: any) => {
           if (!item.anomaly?.hasAnomaly) return 0;
-          if (item.anomaly.severity === 'danger') return 2;
-          if (item.anomaly.severity === 'warning') return 1;
-          return 0;
+          let base = item.anomaly.severity === 'danger' ? 2000 : 1000;
+          if (item.anomaly.checks && item.anomaly.checks[0]) {
+            base += getAnomalyCheckPriority(item.anomaly.checks[0]);
+          }
+          return base;
         };
         const wA = getWeight(a);
         const wB = getWeight(b);
@@ -283,6 +287,128 @@ export const DataTable: React.FC<DataTableProps> = ({
     if (selectedIds.size === 0) return data;
     return data.filter((d) => selectedIds.has(d.waterId));
   }, [data, selectedIds]);
+
+  // 依據勾選水錶或當前篩選即時計算統計數據總和
+  const isCustomSelection = selectedIds.size > 0;
+  const targetItems = useMemo(() => {
+    if (isCustomSelection) {
+      return enrichedDataWithMonthRange.filter((item) => selectedIds.has(item.waterId));
+    }
+    return sortedData;
+  }, [isCustomSelection, selectedIds, enrichedDataWithMonthRange, sortedData]);
+
+  const checkedStats = useMemo(() => {
+    let waterTotal = 0;
+    let sewageTotal = 0;
+    let twelveAvgTotal = 0;
+    let twelveAvgCount = 0;
+    let anomalyCount = 0;
+    let dangerCount = 0;
+    let warningCount = 0;
+
+    targetItems.forEach((item) => {
+      waterTotal += item.periodWater || 0;
+      sewageTotal += item.periodWw || 0;
+
+      if (item.twelveAvg !== null && item.twelveAvg !== undefined && !isNaN(item.twelveAvg)) {
+        twelveAvgTotal += item.twelveAvg;
+        twelveAvgCount++;
+      }
+
+      if (item.anomaly?.hasAnomaly) {
+        anomalyCount++;
+        if (item.anomaly.severity === 'danger') {
+          dangerCount++;
+        } else if (item.anomaly.severity === 'warning') {
+          warningCount++;
+        }
+      }
+    });
+
+    const ratio = waterTotal > 0 ? sewageTotal / waterTotal : null;
+
+    return {
+      waterTotal,
+      sewageTotal,
+      ratio,
+      twelveAvgTotal,
+      twelveAvgCount,
+      anomalyCount,
+      dangerCount,
+      warningCount,
+      totalCount: targetItems.length,
+    };
+  }, [targetItems]);
+
+  // 污自比格式化與評估
+  const ratioText = useMemo(() => {
+    if (checkedStats.waterTotal === 0 && checkedStats.sewageTotal === 0) return '0.0%';
+    if (checkedStats.ratio === null) return '-';
+    return `${(checkedStats.ratio * 100).toFixed(1)}%`;
+  }, [checkedStats.waterTotal, checkedStats.sewageTotal, checkedStats.ratio]);
+
+  const ratioStatus = useMemo(() => {
+    const r = checkedStats.ratio;
+    if (checkedStats.waterTotal === 0 && checkedStats.sewageTotal === 0) {
+      return {
+        label: '無用水無排水',
+        colorClass: 'text-slate-400',
+        icon: 'check',
+      };
+    }
+    if (r === null) {
+      return {
+        label: '無用水資料',
+        colorClass: 'text-slate-400',
+        icon: 'check',
+      };
+    }
+    if (r > 1.2) {
+      return {
+        label: '⚡ 污自比偏高 (>120%)',
+        colorClass: 'text-rose-400',
+        icon: 'alert',
+      };
+    }
+    if (r > 1.0) {
+      return {
+        label: '🟡 排水大於用水 (100%~120%)',
+        colorClass: 'text-amber-400',
+        icon: 'alert',
+      };
+    }
+    if (r < 0.35) {
+      return {
+        label: '💧 污自比偏低 (<35%)',
+        colorClass: 'text-amber-400',
+        icon: 'alert',
+      };
+    }
+    return {
+      label: '比例合理 (70%~95%)',
+      colorClass: 'text-emerald-400',
+      icon: 'check',
+    };
+  }, [checkedStats.ratio, checkedStats.waterTotal, checkedStats.sewageTotal]);
+
+  // 數字千分位與小數格式化
+  const formatNumber = (val: number, maxDecimals: number = 3) => {
+    if (isNaN(val) || val === null || val === undefined) return '0';
+    return val.toLocaleString('zh-TW', {
+      minimumFractionDigits: Number.isInteger(val) ? 0 : 1,
+      maximumFractionDigits: maxDecimals,
+    });
+  };
+
+  const handleSelectAllFiltered = () => {
+    const next = new Set<string>();
+    sortedData.forEach((item) => next.add(item.waterId));
+    setSelectedIds(next);
+  };
+
+  const handleClearSelection = () => {
+    setSelectedIds(new Set());
+  };
 
   // 計算目前水錶資料中整體的最新抄錶日期
   const overallLatestDate = useMemo(() => {
@@ -473,6 +599,192 @@ export const DataTable: React.FC<DataTableProps> = ({
               <option value="low">輕度 (&lt; 50 m³/日)</option>
               <option value="nodata">無有效數據</option>
             </select>
+          </div>
+        </div>
+
+        {/* 依照勾選廠商或當前篩選即時統計數據總和 (符合附圖 5 項卡片設計) */}
+        <div className="pt-2 space-y-3">
+          {/* 勾選狀態與快速操作輔助條 */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-300 font-semibold flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-cyan-400" />
+                {isCustomSelection ? (
+                  <span className="text-cyan-300 font-bold">
+                    已依據勾選的 {selectedIds.size} 支水錶即時加總統計數據
+                  </span>
+                ) : (
+                  <span className="text-slate-300">
+                    全區 / 目前篩選水錶統計數據總和 ({targetItems.length} 支水錶)
+                  </span>
+                )}
+              </span>
+              {isCustomSelection ? (
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-medium animate-pulse">
+                  動態連動統計中
+                </span>
+              ) : (
+                <span className="text-[11px] text-slate-400">
+                  (在下方勾選水錶即可動態加總所選廠商數據)
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSelectAllFiltered}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-medium transition-all"
+              >
+                全選目前篩選 ({sortedData.length})
+              </button>
+              {selectedIds.size > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearSelection}
+                  className="px-2.5 py-1 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-500/30 text-xs font-medium transition-all"
+                >
+                  清除勾選 ({selectedIds.size})
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 5 項統計卡片 (Grid 5 欄) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+            {/* Card 1: 自來水使用量 */}
+            <div className={`bg-[#0B132B]/90 border rounded-2xl p-4 sm:p-4.5 relative overflow-hidden transition-all duration-200 ${
+              isCustomSelection ? 'border-sky-500/50 shadow-md shadow-sky-950/40' : 'border-slate-800/90 hover:border-slate-700'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs sm:text-sm font-bold text-sky-400 flex items-center gap-1.5">
+                  <Droplets className="w-4 h-4 text-sky-400" />
+                  自來水使用量
+                </span>
+                <div className="w-8 h-8 rounded-full bg-sky-950/80 border border-sky-500/30 flex items-center justify-center text-sky-400 shadow-inner">
+                  <Droplets className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-1.5 flex-wrap">
+                <span className="text-2xl sm:text-[26px] font-black text-white tracking-tight font-mono">
+                  {formatNumber(checkedStats.waterTotal)}
+                </span>
+                <span className="text-xs font-semibold text-sky-400">m³</span>
+              </div>
+              <div className="mt-2 text-xs text-slate-400 font-medium">
+                {isCustomSelection ? `已勾選 ${targetItems.length} 支水錶總用水量` : `${selectedPark ? '園區' : '全區'}總用水量`}
+              </div>
+            </div>
+
+            {/* Card 2: 污水排放量 */}
+            <div className={`bg-[#0B132B]/90 border rounded-2xl p-4 sm:p-4.5 relative overflow-hidden transition-all duration-200 ${
+              isCustomSelection ? 'border-cyan-500/50 shadow-md shadow-cyan-950/40' : 'border-slate-800/90 hover:border-slate-700'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs sm:text-sm font-bold text-cyan-400 flex items-center gap-1.5">
+                  <Waves className="w-4 h-4 text-cyan-400" />
+                  污水排放量
+                </span>
+                <div className="w-8 h-8 rounded-full bg-cyan-950/80 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shadow-inner">
+                  <Waves className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-1.5 flex-wrap">
+                <span className="text-2xl sm:text-[26px] font-black text-white tracking-tight font-mono">
+                  {formatNumber(checkedStats.sewageTotal)}
+                </span>
+                <span className="text-xs font-semibold text-cyan-400">m³</span>
+              </div>
+              <div className="mt-2 text-xs text-slate-400 font-medium">
+                {isCustomSelection ? `已勾選 ${targetItems.length} 支水錶總排水量` : `${selectedPark ? '園區' : '全區'}總排水量`}
+              </div>
+            </div>
+
+            {/* Card 3: 區間污自比 */}
+            <div className={`bg-[#0B132B]/90 border rounded-2xl p-4 sm:p-4.5 relative overflow-hidden transition-all duration-200 ${
+              isCustomSelection ? 'border-indigo-500/50 shadow-md shadow-indigo-950/40' : 'border-slate-800/90 hover:border-slate-700'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs sm:text-sm font-bold text-indigo-400 flex items-center gap-1.5">
+                  <Zap className="w-4 h-4 text-indigo-400" />
+                  區間污自比
+                </span>
+                <div className="w-8 h-8 rounded-full bg-indigo-950/80 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-inner">
+                  <Gauge className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-1.5 flex-wrap">
+                <span className={`text-2xl sm:text-[26px] font-black tracking-tight font-mono ${ratioStatus.colorClass}`}>
+                  {ratioText}
+                </span>
+                <span className="text-xs text-slate-400 font-normal">(污水/自來水)</span>
+              </div>
+              <div className={`mt-2 text-xs font-medium flex items-center gap-1 ${ratioStatus.colorClass}`}>
+                {ratioStatus.icon === 'check' ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                )}
+                <span>{ratioStatus.label}</span>
+              </div>
+            </div>
+
+            {/* Card 4: 前12個月日均量 */}
+            <div className={`bg-[#0B132B]/90 border rounded-2xl p-4 sm:p-4.5 relative overflow-hidden transition-all duration-200 ${
+              isCustomSelection ? 'border-emerald-500/50 shadow-md shadow-emerald-950/40' : 'border-slate-800/90 hover:border-slate-700'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs sm:text-sm font-bold text-emerald-400 flex items-center gap-1.5">
+                  <Gauge className="w-4 h-4 text-emerald-400" />
+                  前12個月日均量
+                </span>
+                <div className="px-2 py-0.5 rounded-lg bg-emerald-950/80 border border-emerald-500/30 text-emerald-400 text-xs font-mono font-bold">
+                  12M
+                </div>
+              </div>
+              <div className="flex items-baseline gap-1.5 flex-wrap">
+                <span className="text-2xl sm:text-[26px] font-black text-cyan-300 tracking-tight font-mono">
+                  {checkedStats.twelveAvgTotal > 0 ? checkedStats.twelveAvgTotal.toFixed(1) : '0.0'}
+                </span>
+                <span className="text-xs font-semibold text-cyan-400">m³/日</span>
+              </div>
+              <div className="mt-2 text-xs text-slate-400 font-medium">
+                {isCustomSelection
+                  ? `已勾選 ${checkedStats.twelveAvgCount} 支水錶 12 個月基準日均`
+                  : `${checkedStats.twelveAvgCount} 支水錶 12 個月基準日均`}
+              </div>
+            </div>
+
+            {/* Card 5: 疑似異常項目 */}
+            <div className={`bg-[#0B132B]/90 border rounded-2xl p-4 sm:p-4.5 relative overflow-hidden transition-all duration-200 ${
+              isCustomSelection ? 'border-rose-500/50 shadow-md shadow-rose-950/40' : 'border-slate-800/90 hover:border-slate-700'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs sm:text-sm font-bold text-rose-400 flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-400" />
+                  疑似異常項目
+                </span>
+                <div className="w-8 h-8 rounded-full bg-rose-950/80 border border-rose-500/30 flex items-center justify-center text-rose-400 shadow-inner">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-1.5 flex-wrap">
+                <span className="text-2xl sm:text-[26px] font-black text-rose-400 tracking-tight font-mono">
+                  {checkedStats.anomalyCount}
+                </span>
+                <span className="text-xs text-slate-300 font-medium">支水錶疑似異常</span>
+              </div>
+              <div className="mt-2 text-xs font-medium text-slate-300 flex items-center gap-3">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 inline-block shadow-sm shadow-rose-500/60"></span>
+                  嚴重 <span className="text-rose-400 font-bold font-mono">{checkedStats.dangerCount}</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 inline-block shadow-sm shadow-amber-400/60"></span>
+                  警戒 <span className="text-amber-400 font-bold font-mono">{checkedStats.warningCount}</span>
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -715,17 +1027,35 @@ export const DataTable: React.FC<DataTableProps> = ({
                     {/* Anomaly Diagnosis */}
                     <td className="py-3 px-3 text-center whitespace-nowrap">
                       {item.anomaly?.hasAnomaly ? (
-                        <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            item.anomaly.severity === 'danger'
-                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                              : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                          }`}
-                          title={[...item.anomaly.reasons, ...(item.anomaly.notes || [])].join('\n')}
-                        >
-                          <AlertTriangle className="w-3 h-3" />
-                          {item.anomaly.tags[0] || '異常'}
-                        </span>
+                        <div className="inline-flex items-center justify-center gap-1.5">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold shadow-sm ${
+                              item.anomaly.severity === 'danger'
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                            }`}
+                            title={[
+                              item.anomaly.checks && item.anomaly.checks.length > 1
+                                ? `【多項異常項目 · 優先顯示最嚴重異常】(共檢出 ${item.anomaly.checks.length} 項)`
+                                : `【異常初判結果】`,
+                              ...(item.anomaly.checks && item.anomaly.checks.length > 0
+                                ? item.anomaly.checks.map((c, idx) => `${idx + 1}. [${c.severity === 'danger' ? '嚴重' : '警戒'}] ${c.title}：${c.description}`)
+                                : item.anomaly.reasons),
+                              ...(item.anomaly.notes && item.anomaly.notes.length > 0 ? ['\n【備註說明】', ...item.anomaly.notes] : []),
+                            ].join('\n')}
+                          >
+                            <AlertTriangle className="w-3 h-3 shrink-0" />
+                            {item.anomaly.tags[0] || '異常'}
+                          </span>
+                          {item.anomaly.checks && item.anomaly.checks.length > 1 && (
+                            <span
+                              className="px-1.5 py-0.2 rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[9px] font-bold"
+                              title={`共出現 ${item.anomaly.checks.length} 項異常（已依嚴重度排序，優先顯示最嚴重項目）`}
+                            >
+                              +{item.anomaly.checks.length - 1}
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <span
                           className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium ${
@@ -781,13 +1111,14 @@ export const DataTable: React.FC<DataTableProps> = ({
               setPageSize(Number(e.target.value));
               setCurrentPage(1);
             }}
-            className="bg-slate-900 border border-slate-700 text-slate-300 text-xs rounded-lg px-2 py-1 focus:outline-none"
+            className="bg-slate-900 border border-slate-700 text-slate-300 text-xs rounded-lg px-2 py-1 focus:outline-none cursor-pointer hover:border-slate-600 transition-colors"
           >
             <option value={10}>每頁 10 筆</option>
             <option value={15}>每頁 15 筆</option>
             <option value={30}>每頁 30 筆</option>
             <option value={50}>每頁 50 筆</option>
             <option value={100}>每頁 100 筆</option>
+            <option value={200}>每頁 200 筆 (最大)</option>
           </select>
 
           <div className="flex items-center gap-1">

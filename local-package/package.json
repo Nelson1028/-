@@ -1,0 +1,13 @@
+{
+  "name": "tainan-sewage-audit-system-local",
+  "version": "1.0.0",
+  "description": "臺南經發局工業區園區廠商水錶檢核系統 (本地主機獨立執行版)",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

@@ -141,6 +141,11 @@ export const DetailModal: React.FC<DetailModalProps> = ({ vendor, onClose }) => 
                   }`}>
                     <AlertTriangle className="w-3 h-3" />
                     {vendor.anomaly.tags[0] || '異常'}
+                    {vendor.anomaly.checks && vendor.anomaly.checks.length > 1 && (
+                      <span className="ml-1 px-1.5 py-0.2 bg-slate-900/60 rounded-full text-[9px] font-mono border border-current">
+                        +{vendor.anomaly.checks.length - 1} 項
+                      </span>
+                    )}
                   </span>
                 ) : (
                   <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">

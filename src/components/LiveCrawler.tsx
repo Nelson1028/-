@@ -728,6 +728,7 @@ export const LiveCrawler: React.FC<LiveCrawlerProps> = ({
             >
               <option value={1}>1 頁 (最多 50 筆水錶)</option>
               <option value={3}>3 頁 (最多 150 筆水錶)</option>
+              <option value={4}>4 頁 (最多 200 筆水錶)</option>
               <option value={5}>5 頁 (最多 250 筆水錶)</option>
               <option value={10}>10 頁 (最多 500 筆水錶)</option>
               <option value={20}>20 頁 (全量水錶)</option>

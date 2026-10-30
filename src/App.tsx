@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Table as TableIcon,
   TrendingUp,
@@ -50,18 +50,54 @@ export default function App() {
     token?: string;
   } | null>(null);
 
-  // Fetch rainfall data for stations
-  const fetchRainfallForStations = async (stationsToFetch: string[], periodStr?: string) => {
-    const curYM = periodStr || new Date().toISOString().slice(0, 7);
+  // 自動從廠商資料中計算水錶抄錶區間 (YYYY-MM-DD 與 YYYY-MM)
+  const vendorsDateRange = useMemo(() => {
+    let minD = '';
+    let maxD = '';
+    rawVendors.forEach((v) => {
+      (v.waterBillingDays || []).forEach((d) => {
+        if (!d.billingDate) return;
+        const clean = d.billingDate.split('T')[0].split(' ')[0].replace(/\//g, '-');
+        if (!minD || clean < minD) minD = clean;
+        if (!maxD || clean > maxD) maxD = clean;
+      });
+      if (v.billingDate) {
+        const clean = v.billingDate.split('T')[0].split(' ')[0].replace(/\//g, '-');
+        if (!minD || clean < minD) minD = clean;
+        if (!maxD || clean > maxD) maxD = clean;
+      }
+    });
+    return {
+      startDate: minD,
+      endDate: maxD,
+      startPeriod: minD ? minD.slice(0, 7) : new Date().toISOString().slice(0, 7),
+      endPeriod: maxD ? maxD.slice(0, 7) : new Date().toISOString().slice(0, 7),
+    };
+  }, [rawVendors]);
+
+  // Fetch rainfall data for stations (支援指定測站、起始結束年月與日期過濾)
+  const fetchRainfallForStations = async (
+    stationsToFetch: string[],
+    startPeriodStr?: string,
+    endPeriodStr?: string,
+    startDateStr?: string,
+    endDateStr?: string
+  ) => {
+    const sPeriod = startPeriodStr || vendorsDateRange.startPeriod || new Date().toISOString().slice(0, 7);
+    const ePeriod = endPeriodStr || vendorsDateRange.endPeriod || sPeriod;
     const newRainfallMap: Record<string, Record<string, number>> = { ...stationRainfallMap };
     const newRecordsMap: Record<string, RainfallRecord[]> = { ...stationRainfallRecords };
 
     for (const stnId of stationsToFetch) {
       try {
-        const res = await fetch(`/api/proxy/cwa/rainfall?stationId=${encodeURIComponent(stnId)}&period=${encodeURIComponent(curYM)}`);
+        let url = `/api/proxy/cwa/rainfall?stationId=${encodeURIComponent(stnId)}&startPeriod=${encodeURIComponent(sPeriod)}&endPeriod=${encodeURIComponent(ePeriod)}`;
+        if (startDateStr) url += `&startDate=${encodeURIComponent(startDateStr)}`;
+        if (endDateStr) url += `&endDate=${encodeURIComponent(endDateStr)}`;
+
+        const res = await fetch(url);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
-          const map: Record<string, number> = {};
+          const map: Record<string, number> = { ...(newRainfallMap[stnId] || {}) };
           json.data.forEach((r: any) => {
             if (r.date) {
               const cleanDate = r.date.replace(/-/g, '/');
@@ -81,10 +117,27 @@ export default function App() {
     return newRainfallMap;
   };
 
-  // Initial fetch for default stations
+  // Initial fetch for default stations (柳科 -> C0X320 柳營, 新吉 -> C2O950 安南, C0X250 新營)
   useEffect(() => {
-    fetchRainfallForStations(['C0X090', 'C0X250']);
+    fetchRainfallForStations(['C0X320', 'C2O950', 'C0X250']);
   }, []);
+
+  // 當廠商資料載入或水錶區間變更時，自動為該期間重新精準抓取測站降水量
+  useEffect(() => {
+    if (rawVendors.length > 0) {
+      const activeStations = ['C0X320', 'C2O950', 'C0X250'];
+      Object.values(parkStationMap).forEach((stn) => {
+        if (!activeStations.includes(stn)) activeStations.push(stn);
+      });
+      fetchRainfallForStations(
+        activeStations,
+        vendorsDateRange.startPeriod,
+        vendorsDateRange.endPeriod,
+        vendorsDateRange.startDate,
+        vendorsDateRange.endDate
+      );
+    }
+  }, [rawVendors, vendorsDateRange.startPeriod, vendorsDateRange.endPeriod]);
 
   // Update park station selection (相同工業區採用相同測站)
   const handleUpdateParkStation = async (parkKey: string, stationId: string) => {
@@ -93,7 +146,13 @@ export default function App() {
 
     // Fetch rainfall for this station if not yet cached
     if (!stationRainfallMap[stationId]) {
-      await fetchRainfallForStations([stationId]);
+      await fetchRainfallForStations(
+        [stationId],
+        vendorsDateRange.startPeriod,
+        vendorsDateRange.endPeriod,
+        vendorsDateRange.startDate,
+        vendorsDateRange.endDate
+      );
     }
   };
 
@@ -106,7 +165,7 @@ export default function App() {
 
     const enriched = rawVendors.map((v) => {
       const stnId = getStationIdForPark(v.parkName, parkStationMap);
-      const rainMap = stationRainfallMap[stnId] || stationRainfallMap['C0X090'] || {};
+      const rainMap = stationRainfallMap[stnId] || stationRainfallMap['C0X320'] || {};
       const stnInfo = CWA_WEATHER_STATIONS.find((s) => s.id === stnId);
       
       const analyzed = enrichVendorDataWithAnalysis(v, rainMap);
@@ -158,7 +217,7 @@ export default function App() {
     setRawVendors(imported);
     const updatedParks = extractParksFromVendors(imported);
     setParksList(updatedParks);
-    alert(`成功匯入 ${imported.length} 筆水錶排放數據！系統已自動連結氣象測站降雨量，並完成污自比與疑似雨污混流異常初判。`);
+    alert(`成功匯入 ${imported.length} 筆水錶排放數據！系統已自動連結氣象測站降水量，並完成污自比與疑似雨污混流異常初判。`);
   };
 
   // Clear data
@@ -169,6 +228,7 @@ export default function App() {
       setSelectedVendor(null);
     }
   };
+
 
   // Handle successful login
   const handleLoginSuccess = (token: string, accountInfo: { userName: string; loginType: string }) => {
@@ -204,26 +264,28 @@ export default function App() {
             </div>
           </div>
 
-          {/* User Status Badge */}
-          {currentUser && (
-            <div className="flex items-center gap-2 bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs">
-              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              <div className="flex flex-col text-left">
-                <span className="font-bold text-white text-[11px] flex items-center gap-1">
-                  <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
-                  {currentUser.loginType === 'sso' ? '公務' : '一般'}: {currentUser.userName}
-                </span>
-                <span className="text-[10px] text-emerald-400">已通過認證</span>
+          <div className="flex items-center gap-3">
+            {/* User Status Badge */}
+            {currentUser && (
+              <div className="flex items-center gap-2 bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs">
+                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                <div className="flex flex-col text-left">
+                  <span className="font-bold text-white text-[11px] flex items-center gap-1">
+                    <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+                    {currentUser.loginType === 'sso' ? '公務' : '一般'}: {currentUser.userName}
+                  </span>
+                  <span className="text-[10px] text-emerald-400">已通過認證</span>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="ml-2 p-1 text-slate-400 hover:text-rose-400 transition-colors"
+                  title="登出帳號"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
               </div>
-              <button
-                onClick={handleLogout}
-                className="ml-2 p-1 text-slate-400 hover:text-rose-400 transition-colors"
-                title="登出帳號"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* View Tabs: 保留且僅保留「水錶數據監測總覽」與「每日污水排放折線圖與趨勢」 */}
@@ -285,7 +347,7 @@ export default function App() {
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <button
                     onClick={() => setActiveView('charts')}
                     className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-600/20 text-cyan-300 hover:bg-cyan-600/30 border border-cyan-500/30 transition-colors font-medium"
@@ -330,7 +392,21 @@ export default function App() {
             {/* Charts View */}
             <ChartsView
               data={vendors}
+              selectedParkFilter={tableParkFilter}
               onSelectVendor={(v) => setSelectedVendor(v)}
+              stationRainfallMap={stationRainfallMap}
+              stationRainfallRecords={stationRainfallRecords}
+              parkStationMap={parkStationMap}
+              onUpdateParkStation={handleUpdateParkStation}
+              onFetchStationRainfall={(stnId) =>
+                fetchRainfallForStations(
+                  [stnId],
+                  vendorsDateRange.startPeriod,
+                  vendorsDateRange.endPeriod,
+                  vendorsDateRange.startDate,
+                  vendorsDateRange.endDate
+                )
+              }
             />
           </div>
         )}

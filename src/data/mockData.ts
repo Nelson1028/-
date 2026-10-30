@@ -3,7 +3,7 @@ import { ParkOption, VendorSewageData } from '../types';
 /**
  * 目標平臺目前實際在線之工業區名單：
  * 目標平臺 (https://industrialmgr.tainan.gov.tw/paymentBill/sewageMeter) 僅建置柳科工業區與新吉工業區。
- * 其他無資料之工業區 (如安平、官田、永康等) 已全數排除。
+ * 其他無資料之工業區已排除。
  */
 export const DETECTED_PARKS_LIST: ParkOption[] = [
   { id: '', name: '全部工業區' },
@@ -14,7 +14,7 @@ export const DETECTED_PARKS_LIST: ParkOption[] = [
 export const PARKS_LIST = DETECTED_PARKS_LIST;
 
 /**
- * 依據即時爬取之廠商清單，自動動態彙整與同步目標網站內的工業區選項
+ * 依據廠商清單，自動動態彙整與同步工業區選項
  */
 export function extractParksFromVendors(vendors: VendorSewageData[]): ParkOption[] {
   const parkMap = new Map<string, string>();
@@ -23,7 +23,7 @@ export function extractParksFromVendors(vendors: VendorSewageData[]): ParkOption
   parkMap.set('LiouYing', '柳科工業區 (柳營科技工業區)');
   parkMap.set('SinJi', '新吉工業區');
 
-  // 從實際擷取的資料中動態抽取
+  // 從實際資料中動態抽取
   vendors.forEach((v) => {
     if (v.parkName && v.parkName.trim()) {
       const pName = v.parkName.trim();
@@ -45,5 +45,5 @@ export function extractParksFromVendors(vendors: VendorSewageData[]): ParkOption
   return list;
 }
 
-// 0 筆初始範例資料，完全由使用者連線平臺即時爬取或匯入
+// 0 筆初始資料，完全由線上擷取或匯入
 export const SAMPLE_VENDORS: VendorSewageData[] = [];

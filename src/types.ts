@@ -40,7 +40,7 @@ export interface AbnormalSummary {
 
 export interface RainfallRecord {
   date: string; // e.g., "2026/09/01"
-  rainfall: number; // 降雨量 (mm/日)
+  rainfall: number; // 降水量 (mm/日)
   hourlyMax?: number;
   stationId?: string;
   stationName?: string;

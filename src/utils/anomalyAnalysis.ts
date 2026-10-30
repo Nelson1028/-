@@ -22,10 +22,36 @@ function parseBillingDate(dStr?: string): { cleanDate: string; timestamp: number
  * 針對單一水錶資料進行多維度「異常排放初步分析」
  * 嚴格以「抄表日期 (billingDate)」作為時間先後的比較基準，避免因清單排序顛倒（如降冪）導致讀值倒退誤判。
  */
+export function getAnomalyCheckPriority(check: AbnormalCheck): number {
+  if (check.severity === 'danger') {
+    if (check.type === 'rollback' || check.id === 'meter_rollback') return 100;
+    if (check.type === 'exceed_approved' || check.id === 'exceed_limit') return 90;
+    if (check.id === 'ratio_high') return 80;
+    if (check.type === 'consecutive_zero' || check.id === 'consecutive_zero') return 70;
+    return 60;
+  }
+  if (check.severity === 'warning') {
+    if (check.type === 'surge' || check.id === 'daily_surge') return 50;
+    if (check.id === 'ratio_warning') return 40;
+    if (check.id === 'ratio_low') return 30;
+    return 20;
+  }
+  return 0;
+}
+
+/**
+ * 針對單一水錶資料進行多維度「異常排放初步分析」
+ * 嚴格以「抄表日期 (billingDate)」作為時間先後的比較基準，避免因清單排序顛倒（如降冪）導致讀值倒退誤判。
+ * 當單一水錶出現多項異常時，依據嚴重度權重排序，確保 tags[0] / checks[0] 顯示最嚴重的異常項目。
+ */
 export function analyzeVendorAnomaly(vendor: Partial<VendorSewageData>): AbnormalSummary {
-  const checks: AbnormalCheck[] = [];
-  const reasons: string[] = [];
-  const tags: string[] = [];
+  interface InternalCheckItem {
+    check: AbnormalCheck;
+    tag: string;
+    reason: string;
+  }
+
+  const internalChecks: InternalCheckItem[] = [];
   const notes: string[] = [];
 
   const wwVol = vendor.wwVolume !== null && vendor.wwVolume !== undefined ? Number(vendor.wwVolume) : null;
@@ -48,44 +74,50 @@ export function analyzeVendorAnomaly(vendor: Partial<VendorSewageData>): Abnorma
       // 污自比超過 120% 調整為「嚴重異常水錶」
       const severity: AbnormalSeverity = 'danger';
       const msg = `本月目前污自比達 ${ratioPct}%（超過 120% 警戒上限），可能存在地下水/未申報自備水源納管，或水錶計量偏差，列為嚴重異常水錶。`;
-      checks.push({
-        id: 'ratio_high',
-        type: 'ratio',
-        title: '污自比超過120%（嚴重異常）',
-        severity,
-        description: msg,
-        detail: `目前累積污水 ${wwVol?.toLocaleString()} m³ / 自來水 ${waterVol?.toLocaleString()} m³ = ${ratioPct}% (> 120%)`,
+      internalChecks.push({
+        check: {
+          id: 'ratio_high',
+          type: 'ratio',
+          title: '污自比超過120%（嚴重異常）',
+          severity,
+          description: msg,
+          detail: `目前累積污水 ${wwVol?.toLocaleString()} m³ / 自來水 ${waterVol?.toLocaleString()} m³ = ${ratioPct}% (> 120%)`,
+        },
+        tag: `污自比>120% (嚴重異常)`,
+        reason: `污自比超過120% (${ratioPct}%)`,
       });
-      reasons.push(`污自比超過120% (${ratioPct}%)`);
-      tags.push(`污自比>120% (嚴重異常)`);
     } else if (ratio > 1.0) {
       // 污自比 > 100% 及 <= 120% 列為「警戒異常」
       const severity: AbnormalSeverity = 'warning';
       const msg = `本月目前污自比達 ${ratioPct}%（介於 100% ~ 120% 之間），污水排放量已大於自來水使用量，列為警戒關注水錶。`;
-      checks.push({
-        id: 'ratio_warning',
-        type: 'ratio',
-        title: '污自比 100%~120%（警戒）',
-        severity,
-        description: msg,
-        detail: `目前累積污水 ${wwVol?.toLocaleString()} m³ / 自來水 ${waterVol?.toLocaleString()} m³ = ${ratioPct}% (100%~120%)`,
+      internalChecks.push({
+        check: {
+          id: 'ratio_warning',
+          type: 'ratio',
+          title: '污自比 100%~120%（警戒）',
+          severity,
+          description: msg,
+          detail: `目前累積污水 ${wwVol?.toLocaleString()} m³ / 自來水 ${waterVol?.toLocaleString()} m³ = ${ratioPct}% (100%~120%)`,
+        },
+        tag: `污自比100%~120% (警戒)`,
+        reason: `污自比100%~120% (${ratioPct}%)`,
       });
-      reasons.push(`污自比100%~120% (${ratioPct}%)`);
-      tags.push(`污自比100%~120% (警戒)`);
     } else if (ratio < 0.35 && (waterVol || 0) >= 30) {
       // 污自比偏低調整為「警戒異常」
       const severity: AbnormalSeverity = 'warning';
       const msg = `本月目前污自比僅 ${ratioPct}%（低於正常基準 35%），可能存在廠內漏水、冷卻蒸發損耗大或污水未全數納管排放，列為警戒異常。`;
-      checks.push({
-        id: 'ratio_low',
-        type: 'ratio',
-        title: '污自比偏低（警戒異常）',
-        severity,
-        description: msg,
-        detail: `目前累積污水 ${wwVol?.toLocaleString()} m³ / 自來水 ${waterVol?.toLocaleString()} m³ = ${ratioPct}% (< 35%)`,
+      internalChecks.push({
+        check: {
+          id: 'ratio_low',
+          type: 'ratio',
+          title: '污自比偏低（警戒異常）',
+          severity,
+          description: msg,
+          detail: `目前累積污水 ${wwVol?.toLocaleString()} m³ / 自來水 ${waterVol?.toLocaleString()} m³ = ${ratioPct}% (< 35%)`,
+        },
+        tag: `污自比偏低 (警戒)`,
+        reason: `污自比偏低 (${ratioPct}%)`,
       });
-      reasons.push(`污自比偏低 (${ratioPct}%)`);
-      tags.push(`污自比偏低 (警戒異常)`);
     }
   } else if (isZeroBoth) {
     // 無用水無排水：列為正常（無用水無排水）
@@ -206,62 +238,77 @@ export function analyzeVendorAnomaly(vendor: Partial<VendorSewageData>): Abnorma
 
     // 彙整連續未排放 (調整為「嚴重異常」；若為無用水無排水則列為正常)
     if (maxConsecutiveZeros >= 7 && !isZeroBoth) {
-      checks.push({
-        id: 'consecutive_zero',
-        type: 'consecutive_zero',
-        title: '連續 7 日以上未排放污水（嚴重異常）',
-        severity: 'danger',
-        description: `監測到連續 ${maxConsecutiveZeros} 日污水量為 0 m³/日（符合官方系統連續 7 日零排放重大異常判定），可能為水錶故障、未申報停工或排放管線問題。`,
-        detail: `最長連續零排放天數: ${maxConsecutiveZeros} 天`,
+      internalChecks.push({
+        check: {
+          id: 'consecutive_zero',
+          type: 'consecutive_zero',
+          title: '連續 7 日以上未排放污水（嚴重異常）',
+          severity: 'danger',
+          description: `監測到連續 ${maxConsecutiveZeros} 日污水量為 0 m³/日（符合官方系統連續 7 日零排放重大異常判定），可能為水錶故障、未申報停工或排放管線問題。`,
+          detail: `最長連續零排放天數: ${maxConsecutiveZeros} 天`,
+        },
+        tag: `連續${maxConsecutiveZeros}日未排放 (嚴重異常)`,
+        reason: `連續 ${maxConsecutiveZeros} 日零排放 (嚴重異常)`,
       });
-      reasons.push(`連續 ${maxConsecutiveZeros} 日零排放 (嚴重異常)`);
-      tags.push(`連續${maxConsecutiveZeros}日未排放 (嚴重異常)`);
     }
 
     // 彙整讀值倒退 (僅針對污水水錶讀值倒退)
     if (hasRollback) {
       const detailSummary = rollbackItems.slice(0, 2).join('；') + (rollbackItems.length > 2 ? ` 等共 ${rollbackItems.length} 處` : '');
-      checks.push({
-        id: 'meter_rollback',
-        type: 'rollback',
-        title: '污水水錶累計讀值倒退異常',
-        severity: 'danger',
-        description: `監測到污水水錶累計讀值低於前一日之實際抄表讀值，疑似更換水錶未校正或抄錶人工筆誤。`,
-        detail: detailSummary,
+      internalChecks.push({
+        check: {
+          id: 'meter_rollback',
+          type: 'rollback',
+          title: '污水水錶累計讀值倒退異常',
+          severity: 'danger',
+          description: `監測到污水水錶累計讀值低於前一日之實際抄表讀值，疑似更換水錶未校正或抄錶人工筆誤。`,
+          detail: detailSummary,
+        },
+        tag: '污水讀值倒退 (嚴重異常)',
+        reason: '污水讀值倒退異常',
       });
-      reasons.push('污水讀值倒退異常');
-      tags.push('污水讀值倒退');
     }
 
     // 彙整單日突增
     if (surgeCount > 0 && twelveAvg) {
-      checks.push({
-        id: 'daily_surge',
-        type: 'surge',
-        title: '單日污水排放量突增',
-        severity: 'warning',
-        description: `監測到 ${surgeCount} 次單日排放突增（最高於 ${surgeDate} 達 ${surgeMax} m³/日，為12個月日均 ${twelveAvg} m³/日的 ${(surgeMax / twelveAvg).toFixed(1)} 倍）。`,
-        detail: `最高單日: ${surgeMax} m³/日 (日期: ${surgeDate})`,
-        date: surgeDate,
+      internalChecks.push({
+        check: {
+          id: 'daily_surge',
+          type: 'surge',
+          title: '單日污水排放量突增',
+          severity: 'warning',
+          description: `監測到 ${surgeCount} 次單日排放突增（最高於 ${surgeDate} 達 ${surgeMax} m³/日，為12個月日均 ${twelveAvg} m³/日的 ${(surgeMax / twelveAvg).toFixed(1)} 倍）。`,
+          detail: `最高單日: ${surgeMax} m³/日 (日期: ${surgeDate})`,
+          date: surgeDate,
+        },
+        tag: '單日突增 (警戒)',
+        reason: `單日突增 (${surgeMax} m³)`,
       });
-      reasons.push(`單日突增 (${surgeMax} m³)`);
-      tags.push(`單日突增`);
     }
 
     // 彙整超額排放
     if (hasExceedApproved) {
-      checks.push({
-        id: 'exceed_limit',
-        type: 'exceed_approved',
-        title: '超出核准/容許排放量',
-        severity: 'danger',
-        description: `單日污水排放量超出官方核准或日容許排放量，需通報園區查核。`,
-        detail: exceedDetail,
+      internalChecks.push({
+        check: {
+          id: 'exceed_limit',
+          type: 'exceed_approved',
+          title: '超出核准/容許排放量',
+          severity: 'danger',
+          description: `單日污水排放量超出官方核准或日容許排放量，需通報園區查核。`,
+          detail: exceedDetail,
+        },
+        tag: '超出核准量 (嚴重異常)',
+        reason: '超額排放',
       });
-      reasons.push('超額排放');
-      tags.push('超出核准量');
     }
   }
+
+  // 【重要核心規範】：若出現多項異常，嚴格依據嚴重度權重排序 (危險度高者優先排列在最前面)
+  internalChecks.sort((a, b) => getAnomalyCheckPriority(b.check) - getAnomalyCheckPriority(a.check));
+
+  const checks: AbnormalCheck[] = internalChecks.map((item) => item.check);
+  const tags: string[] = internalChecks.map((item) => item.tag);
+  const reasons: string[] = internalChecks.map((item) => item.reason);
 
   // 決定整體嚴重程度 (僅由污水指標決定)
   let severity: AbnormalSeverity = 'normal';
