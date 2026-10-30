@@ -10,7 +10,6 @@ import {
   Waves,
   ShieldCheck,
   LogOut,
-  LogIn,
   CheckCircle2,
   Trash2,
 } from 'lucide-react';

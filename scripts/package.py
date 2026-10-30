@@ -6,37 +6,37 @@ import subprocess
 def main():
     print("=== 開始打包本地主機執行檔 ===")
     
+    # 0. 先清除先前產生的 ZIP，避免 Vite build 將其當成 public 靜態資產複製進 dist 造成遞迴打包
+    old_zip = os.path.join("public", "tainan-sewage-system-local.zip")
+    if os.path.exists(old_zip):
+        os.remove(old_zip)
+
     # 1. 執行 vite build
     print("1. 正在編譯前端資源 (vite build)...")
     subprocess.run(["npm", "run", "build"], check=True)
     
-    # 2. 正在使用 esbuild 編譯 server.ts 為 server.mjs
-    print("2. 正在打包後端伺服器 (esbuild server.ts -> server.mjs)...")
+    # 2. 準備打包暫存目錄
+    pkg_dir = "local-package"
+    if os.path.exists(pkg_dir):
+        shutil.rmtree(pkg_dir)
+    os.makedirs(pkg_dir, exist_ok=True)
+
+    # 3. 正在使用 esbuild 編譯 server.ts 為 server.mjs 並直接放入打包目錄
+    print("2. 正在打包後端伺服器 (esbuild server.ts -> local-package/server.mjs)...")
+    server_target = os.path.join(pkg_dir, "server.mjs")
     subprocess.run([
         "npx", "esbuild", "server.ts",
         "--bundle",
         "--platform=node",
         "--format=esm",
         "--packages=external",
-        "--outfile=dist/server.mjs"
+        f"--outfile={server_target}"
     ], check=True)
-
-    # 同時在根目錄複製一份 server.mjs
-    shutil.copyfile("dist/server.mjs", "server.mjs")
     
-    # 3. 準備打包暫存目錄
-    pkg_dir = "local-package"
-    if os.path.exists(pkg_dir):
-        shutil.rmtree(pkg_dir)
-    os.makedirs(pkg_dir, exist_ok=True)
+    # 複製 dist 前端資產目錄到打包資料夾 (排除任何 zip 檔案)
+    shutil.copytree("dist", os.path.join(pkg_dir, "dist"), ignore=shutil.ignore_patterns("*.zip"))
     
-    # 複製 dist 目錄
-    shutil.copytree("dist", os.path.join(pkg_dir, "dist"))
-    
-    # 複製 server.mjs 到根目錄
-    shutil.copyfile("server.mjs", os.path.join(pkg_dir, "server.mjs"))
-    
-    # 寫入乾淨的 package.json
+    # 寫入乾淨精簡的 package.json
     local_pkg_json = """{
   "name": "tainan-sewage-audit-system-local",
   "version": "1.0.0",
@@ -97,7 +97,7 @@ echo 系統即將在預設瀏覽器中開啟: http://localhost:3000
 echo 若欲關閉系統，請直接關閉此命令提示字元視窗。
 echo.
 
-REM 稍候 1.5 秒後在預設瀏覽器開啟網址
+REM 稍候 2 秒後在預設瀏覽器開啟網址
 start "" cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:3000"
 
 REM 啟動 Node.js 伺服器
@@ -206,23 +206,23 @@ node server.mjs
     with open(os.path.join(pkg_dir, "README-本地執行說明.md"), "w", encoding="utf-8") as f:
         f.write(readme_content)
 
-    # 4. 打包為 ZIP 檔案
-    zip_filename = "tainan-sewage-system-local.zip"
-    print(f"4. 正在封裝為獨立 ZIP 壓縮包 ({zip_filename})...")
-    with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+    # 4. 打包為 ZIP 檔案至 public 目錄，不污染根目錄
+    os.makedirs("public", exist_ok=True)
+    zip_target = os.path.join("public", "tainan-sewage-system-local.zip")
+    print(f"4. 正在封裝為獨立 ZIP 壓縮包 ({zip_target})...")
+    with zipfile.ZipFile(zip_target, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for root, dirs, files in os.walk(pkg_dir):
             for file in files:
                 abs_path = os.path.join(root, file)
                 rel_path = os.path.relpath(abs_path, pkg_dir)
                 zipf.write(abs_path, rel_path)
-                
-    # 複製一份到 public 目錄供線上直接點擊下載
-    os.makedirs("public", exist_ok=True)
-    shutil.copyfile(zip_filename, os.path.join("public", zip_filename))
+
+    # 5. 清理暫存目錄
+    shutil.rmtree(pkg_dir)
+    print("5. 已自動清除暫存打包目錄。")
     
-    file_size_kb = os.path.getsize(zip_filename) / 1024
-    print(f"🎉 打包完成！產生檔案: {zip_filename} ({file_size_kb:.1f} KB)")
-    print(f"已同步放置於 public/{zip_filename}，可供瀏覽器端直接下載。")
+    file_size_kb = os.path.getsize(zip_target) / 1024
+    print(f"🎉 打包完成！獨立本地安裝包已就緒: {zip_target} ({file_size_kb:.1f} KB)")
 
 if __name__ == "__main__":
     main()

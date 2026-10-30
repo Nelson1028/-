@@ -288,14 +288,41 @@ async function fetchCodisPrecipitation(stationId: string, startPeriod: string, e
   return map;
 }
 
-// 擷取指定測站與區間之日降水量數據 (整合 CODIS CWA 觀測資料)
-app.get('/api/proxy/cwa/rainfall', async (req, res) => {
-  const stationId = (req.query.stationId as string) || 'C0X320';
-  const startDateParam = (req.query.startDate as string) || (req.query.start as string) || '';
-  const endDateParam = (req.query.endDate as string) || (req.query.end as string) || '';
-  
-  let startPeriod = (req.query.startPeriod as string) || (req.query.period as string) || '';
-  let endPeriod = (req.query.endPeriod as string) || startPeriod;
+interface StationRainfallDataset {
+  stationInfo: { id: string; name: string; parkId: string; location: string };
+  records: Array<{
+    date: string;
+    rainfall: number;
+    hourlyMax: number;
+    stationId: string;
+    stationName: string;
+    intensityLevel: string;
+    isEstimated?: boolean;
+  }>;
+  summary: {
+    totalRainfall: number;
+    rainyDays: number;
+    totalDays: number;
+    heavyRainDays: number;
+    maxDailyRain: number;
+    maxDailyDate: string;
+  };
+  startDate: string;
+  endDate: string;
+}
+
+/**
+ * 集中整合氣象署測站觀測與區間計算，消除重複代碼
+ */
+async function getStationRainfallDataset(
+  stationId: string,
+  startPeriodInput?: string,
+  endPeriodInput?: string,
+  startDateParam?: string,
+  endDateParam?: string
+): Promise<StationRainfallDataset> {
+  let startPeriod = startPeriodInput || '';
+  let endPeriod = endPeriodInput || startPeriod;
 
   if (startDateParam && !startPeriod) {
     startPeriod = startDateParam.slice(0, 7).replace(/\//g, '-');
@@ -306,115 +333,127 @@ app.get('/api/proxy/cwa/rainfall', async (req, res) => {
   if (!startPeriod) startPeriod = new Date().toISOString().slice(0, 7);
   if (!endPeriod) endPeriod = startPeriod;
 
-  const stationInfo = CWA_STATIONS_DATA[stationId] || { 
-    id: stationId, 
-    name: stationId, 
-    parkId: stationId === 'C2O950' ? 'SinJi' : 'LiouYing', 
-    location: '臺南市' 
+  const stationInfo = CWA_STATIONS_DATA[stationId] || {
+    id: stationId,
+    name: stationId,
+    parkId: stationId === 'C2O950' ? 'SinJi' : 'LiouYing',
+    location: '臺南市',
   };
 
+  const months = getMonthsRange(startPeriod, endPeriod);
+  const codisMap = await fetchCodisPrecipitation(stationId, startPeriod, endPeriod);
+  const hasCodisData = Object.keys(codisMap).length > 0;
+
+  let records: Array<{
+    date: string;
+    rainfall: number;
+    hourlyMax: number;
+    stationId: string;
+    stationName: string;
+    intensityLevel: string;
+    isEstimated?: boolean;
+  }> = [];
+
+  for (const mStr of months) {
+    const [year, month] = mStr.split('-').map(Number);
+    const daysInMonth = new Date(year, month, 0).getDate();
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${year}/${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}`;
+
+      let rainfall = 0;
+      let hourlyMax = 0;
+      let isEstimated = false;
+
+      if (codisMap[dateStr]) {
+        rainfall = codisMap[dateStr].rainfall;
+        hourlyMax = codisMap[dateStr].hourlyMax;
+      } else if (hasCodisData) {
+        rainfall = 0;
+        hourlyMax = 0;
+      } else {
+        rainfall = 0;
+        hourlyMax = 0;
+        isEstimated = true;
+      }
+
+      let intensityLevel = '無降水';
+      if (rainfall >= 350) intensityLevel = '超大豪雨';
+      else if (rainfall >= 200) intensityLevel = '大豪雨';
+      else if (rainfall >= 80) intensityLevel = '豪雨';
+      else if (rainfall >= 50) intensityLevel = '大雨';
+      else if (rainfall >= 10) intensityLevel = '中雨';
+      else if (rainfall > 0) intensityLevel = '小雨';
+
+      records.push({
+        date: dateStr,
+        rainfall,
+        hourlyMax,
+        stationId,
+        stationName: stationInfo.name,
+        intensityLevel,
+        isEstimated,
+      });
+    }
+  }
+
+  if (startDateParam) {
+    const sClean = startDateParam.replace(/-/g, '/');
+    records = records.filter((r) => r.date >= sClean);
+  }
+  if (endDateParam) {
+    const eClean = endDateParam.replace(/-/g, '/');
+    records = records.filter((r) => r.date <= eClean);
+  }
+
+  const totalRainfall = Number(records.reduce((acc, cur) => acc + cur.rainfall, 0).toFixed(1));
+  const rainyDays = records.filter((r) => r.rainfall >= 0.5).length;
+  const heavyRainDays = records.filter((r) => r.rainfall >= 50).length;
+  let maxDailyRain = 0;
+  let maxDailyDate = '';
+  records.forEach((r) => {
+    if (r.rainfall > maxDailyRain) {
+      maxDailyRain = r.rainfall;
+      maxDailyDate = r.date;
+    }
+  });
+
+  return {
+    stationInfo,
+    records,
+    summary: {
+      totalRainfall,
+      rainyDays,
+      totalDays: records.length,
+      heavyRainDays,
+      maxDailyRain,
+      maxDailyDate,
+    },
+    startDate: records[0]?.date || startDateParam || startPeriod,
+    endDate: records[records.length - 1]?.date || endDateParam || endPeriod,
+  };
+}
+
+// 擷取指定測站與區間之日降水量數據 (整合 CODIS CWA 觀測資料)
+app.get('/api/proxy/cwa/rainfall', async (req, res) => {
+  const stationId = (req.query.stationId as string) || 'C0X320';
+  const startDateParam = (req.query.startDate as string) || (req.query.start as string) || '';
+  const endDateParam = (req.query.endDate as string) || (req.query.end as string) || '';
+  const startPeriod = (req.query.startPeriod as string) || (req.query.period as string) || '';
+  const endPeriod = (req.query.endPeriod as string) || startPeriod;
+
   try {
-    const months = getMonthsRange(startPeriod, endPeriod);
-
-    // 優先向中央氣象署 CODIS 抓取真實觀測紀錄
-    const codisMap = await fetchCodisPrecipitation(stationId, startPeriod, endPeriod);
-    const hasCodisData = Object.keys(codisMap).length > 0;
-
-    let records: Array<{
-      date: string;
-      rainfall: number;
-      hourlyMax: number;
-      stationId: string;
-      stationName: string;
-      intensityLevel: string;
-      isEstimated?: boolean;
-    }> = [];
-
-    for (const mStr of months) {
-      const [year, month] = mStr.split('-').map(Number);
-      const daysInMonth = new Date(year, month, 0).getDate();
-
-      for (let day = 1; day <= daysInMonth; day++) {
-        const dateStr = `${year}/${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}`;
-        
-        let rainfall = 0;
-        let hourlyMax = 0;
-        let isEstimated = false;
-
-        if (codisMap[dateStr]) {
-          // 採用氣象署 CODIS 實測值
-          rainfall = codisMap[dateStr].rainfall;
-          hourlyMax = codisMap[dateStr].hourlyMax;
-        } else if (hasCodisData) {
-          // 該月份已有氣象署觀測回傳，若無紀錄代表無降水 (0 mm)
-          rainfall = 0;
-          hourlyMax = 0;
-        } else {
-          // 僅在無法連線或未歸檔期間，標記預設值 0（不捏造虛假暴雨）
-          rainfall = 0;
-          hourlyMax = 0;
-          isEstimated = true;
-        }
-
-        let intensityLevel = '無降水';
-        if (rainfall >= 350) intensityLevel = '超大豪雨';
-        else if (rainfall >= 200) intensityLevel = '大豪雨';
-        else if (rainfall >= 80) intensityLevel = '豪雨';
-        else if (rainfall >= 50) intensityLevel = '大雨';
-        else if (rainfall >= 10) intensityLevel = '中雨';
-        else if (rainfall > 0) intensityLevel = '小雨';
-
-        records.push({
-          date: dateStr,
-          rainfall,
-          hourlyMax,
-          stationId,
-          stationName: stationInfo.name,
-          intensityLevel,
-          isEstimated,
-        });
-      }
-    }
-
-    // 若有填選具體年月日，進行精確日期區間過濾 (YYYY/MM/DD)
-    if (startDateParam) {
-      const sClean = startDateParam.replace(/-/g, '/');
-      records = records.filter((r) => r.date >= sClean);
-    }
-    if (endDateParam) {
-      const eClean = endDateParam.replace(/-/g, '/');
-      records = records.filter((r) => r.date <= eClean);
-    }
-
-    const totalRainfall = Number(records.reduce((acc, cur) => acc + cur.rainfall, 0).toFixed(1));
-    const rainyDays = records.filter((r) => r.rainfall >= 0.5).length;
-    const heavyRainDays = records.filter((r) => r.rainfall >= 50).length;
-    let maxDailyRain = 0;
-    let maxDailyDate = '';
-    records.forEach((r) => {
-      if (r.rainfall > maxDailyRain) {
-        maxDailyRain = r.rainfall;
-        maxDailyDate = r.date;
-      }
-    });
-
+    const dataset = await getStationRainfallDataset(stationId, startPeriod, endPeriod, startDateParam, endDateParam);
     return res.json({
       success: true,
       source: 'https://codis.cwa.gov.tw/StationData',
       stationId,
-      stationName: stationInfo.name,
-      location: stationInfo.location,
-      startDate: records[0]?.date || startDateParam || startPeriod,
-      endDate: records[records.length - 1]?.date || endDateParam || endPeriod,
-      summary: {
-        totalRainfall,
-        rainyDays,
-        totalDays: records.length,
-        heavyRainDays,
-        maxDailyRain,
-        maxDailyDate,
-      },
-      data: records,
+      stationName: dataset.stationInfo.name,
+      location: dataset.stationInfo.location,
+      startDate: dataset.startDate,
+      endDate: dataset.endDate,
+      summary: dataset.summary,
+      data: dataset.records,
     });
   } catch (err: any) {
     return res.status(500).json({
@@ -429,77 +468,33 @@ app.get('/api/proxy/cwa/rainfall/download.csv', async (req, res) => {
   const stationId = (req.query.stationId as string) || 'C0X320';
   const startDateParam = (req.query.startDate as string) || '';
   const endDateParam = (req.query.endDate as string) || '';
-  let startPeriod = (req.query.startPeriod as string) || (startDateParam ? startDateParam.slice(0, 7) : new Date().toISOString().slice(0, 7));
-  let endPeriod = (req.query.endPeriod as string) || (endDateParam ? endDateParam.slice(0, 7) : startPeriod);
+  const startPeriod = (req.query.startPeriod as string) || (startDateParam ? startDateParam.slice(0, 7) : '');
+  const endPeriod = (req.query.endPeriod as string) || (endDateParam ? endDateParam.slice(0, 7) : startPeriod);
 
-  const stationInfo = CWA_STATIONS_DATA[stationId] || { id: stationId, name: stationId, parkId: 'LiouYing', location: '臺南市' };
-  const months = getMonthsRange(startPeriod, endPeriod);
+  try {
+    const dataset = await getStationRainfallDataset(stationId, startPeriod, endPeriod, startDateParam, endDateParam);
+    const parkLabel = dataset.stationInfo.parkId === 'SinJi' ? '新吉工業區' : '柳科工業區';
+    const csvHeaders = ['測站代碼', '測站名稱', '觀測日期', '日降水量(mm)', '降水強度等級', '最大時降水量(mm)', '對應園區', '資料來源'];
+    const csvRows = dataset.records.map((r) => [
+      `"${stationId}"`,
+      `"${dataset.stationInfo.name}"`,
+      `"${r.date}"`,
+      r.rainfall,
+      `"${r.intensityLevel}"`,
+      r.hourlyMax,
+      `"${parkLabel}"`,
+      `"https://codis.cwa.gov.tw/StationData"`,
+    ]);
 
-  const codisMap = await fetchCodisPrecipitation(stationId, startPeriod, endPeriod);
-  const hasCodisData = Object.keys(codisMap).length > 0;
-  let records: Array<{ date: string; rainfall: number; hourlyMax: number; intensityLevel: string }> = [];
+    const csvContent = '\uFEFF' + [csvHeaders.join(','), ...csvRows.map((row) => row.join(','))].join('\n');
+    const filename = `氣象署CODIS降水數據_${dataset.stationInfo.name}(${stationId})_${startDateParam || dataset.startDate}_${endDateParam || dataset.endDate}.csv`;
 
-  for (const mStr of months) {
-    const [year, month] = mStr.split('-').map(Number);
-    const daysInMonth = new Date(year, month, 0).getDate();
-
-    for (let day = 1; day <= daysInMonth; day++) {
-      const dateStr = `${year}/${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}`;
-      
-      let rainfall = 0;
-      let hourlyMax = 0;
-
-      if (codisMap[dateStr]) {
-        rainfall = codisMap[dateStr].rainfall;
-        hourlyMax = codisMap[dateStr].hourlyMax;
-      } else if (hasCodisData) {
-        rainfall = 0;
-        hourlyMax = 0;
-      } else {
-        rainfall = 0;
-        hourlyMax = 0;
-      }
-
-      let intensityLevel = '無降水';
-      if (rainfall >= 350) intensityLevel = '超大豪雨';
-      else if (rainfall >= 200) intensityLevel = '大豪雨';
-      else if (rainfall >= 80) intensityLevel = '豪雨';
-      else if (rainfall >= 50) intensityLevel = '大雨';
-      else if (rainfall >= 10) intensityLevel = '中雨';
-      else if (rainfall > 0) intensityLevel = '小雨';
-
-      records.push({ date: dateStr, rainfall, hourlyMax, intensityLevel });
-    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    return res.send(csvContent);
+  } catch (err: any) {
+    return res.status(500).send(`下載降水資料 CSV 失敗: ${err?.message}`);
   }
-
-  if (startDateParam) {
-    const sClean = startDateParam.replace(/-/g, '/');
-    records = records.filter((r) => r.date >= sClean);
-  }
-  if (endDateParam) {
-    const eClean = endDateParam.replace(/-/g, '/');
-    records = records.filter((r) => r.date <= eClean);
-  }
-
-  const parkLabel = stationInfo.parkId === 'SinJi' ? '新吉工業區' : '柳科工業區';
-  const csvHeaders = ['測站代碼', '測站名稱', '觀測日期', '日降水量(mm)', '降水強度等級', '最大時降水量(mm)', '對應園區', '資料來源'];
-  const csvRows = records.map((r) => [
-    `"${stationId}"`,
-    `"${stationInfo.name}"`,
-    `"${r.date}"`,
-    r.rainfall,
-    `"${r.intensityLevel}"`,
-    r.hourlyMax,
-    `"${parkLabel}"`,
-    `"https://codis.cwa.gov.tw/StationData"`,
-  ]);
-
-  const csvContent = '\uFEFF' + [csvHeaders.join(','), ...csvRows.map((row) => row.join(','))].join('\n');
-  const filename = `氣象署CODIS降水數據_${stationInfo.name}(${stationId})_${startDateParam || startPeriod}_${endDateParam || endPeriod}.csv`;
-
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-  return res.send(csvContent);
 });
 
 // Get Captcha from official platform

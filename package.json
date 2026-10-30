@@ -9,7 +9,7 @@
     "start": "tsx server.ts",
     "package:local": "python3 scripts/package.py",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist server.mjs local-package *.zip",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
